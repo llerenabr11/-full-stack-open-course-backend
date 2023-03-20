@@ -1,1 +1,1 @@
-App link: https://phonebook-bcknd-open.fly.dev/
+App link: http://35.169.194.157/

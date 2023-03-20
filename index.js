@@ -1,6 +1,10 @@
+require("dotenv").config();
 const express = require("express");
 const app = express();
 const cors = require("cors");
+
+// Mongo DB
+const Person = require("./models/person");
 
 // create the body token
 const morgan = require("morgan");
@@ -9,9 +13,10 @@ morgan.token("body", (req, res) => {
   return JSON.stringify(req.body);
 });
 
-app.use(cors());
-app.use(express.json());
+// Middlewares
 app.use(express.static("build"));
+app.use(express.json());
+app.use(cors());
 app.use(
   morgan((tokens, req, res) => {
     return [
@@ -27,98 +32,97 @@ app.use(
   })
 );
 
-let persons = [
-  {
-    id: 1,
-    name: "Arto Hellas",
-    number: "040-123456",
-  },
-  {
-    id: 2,
-    name: "Ada Lovelace",
-    number: "39-44-5323523",
-  },
-  {
-    id: 3,
-    name: "Dan Abramov",
-    number: "12-43-234345",
-  },
-  {
-    id: 4,
-    name: "Mary Poppendieck",
-    number: "39-23-6423122",
-  },
-];
-
 app.get("/api/persons", (request, response) => {
-  response.json(persons);
+  Person.find({}).then((persons) => {
+    response.json(persons);
+  });
 });
 
 app.get("/info", (request, response) => {
-  response.send(
-    `<p>Phonebook has info for ${
-      persons.length
-    } people</p>\n <p>${new Date()}</p>`
-  );
+  Person.find({}).then((persons) => {
+    response.send(
+      `<p>Phonebook has info for ${
+        persons.length
+      } people</p>\n <p>${new Date()}</p>`
+    );
+  });
 });
 
-app.get("/api/persons/:id", (request, response) => {
-  const id = Number(request.params.id);
-  const person = persons.find((p) => p.id == id);
-  if (person) {
-    response.json(person);
-  } else {
-    response.status(404).end();
-  }
-});
-
-app.delete("/api/persons/:id", (request, response) => {
-  const id = Number(request.params.id);
-  persons = persons.filter((person) => person.id != id);
-
-  response.status(204).end();
-});
-
-app.put("/api/persons/:id", (request, response) => {
-  const id = Number(request.params.id);
-  const newNumber = request.body.number;
-  for (i = 0; i < persons.length; i++) {
-    if (persons[i].id == id) {
-      persons[i].number = newNumber;
-    }
-  }
-
-  response.json(request.body);
-});
-
-app.post("/api/persons", (request, response) => {
-  const newPerson = request.body;
-  // Check if the name is empty
-  if (!newPerson.name) {
-    response.status(400).json({
-      error: "the person must have a name",
-    });
-  } else if (!newPerson.number) {
-    // Check if the number is empty
-    response.status(400).json({
-      error: "the person must have a number",
-    });
-  } else if (
-    persons.some((person) => {
-      return person.name == newPerson.name;
+app.get("/api/persons/:id", (request, response, next) => {
+  const id = request.params.id;
+  Person.findById(id)
+    .then((person) => {
+      if (person) {
+        response.json(person);
+      } else {
+        response.status(404).end();
+      }
     })
-  ) {
-    // The name already exists
-    response.status(400).json({
-      error: "name must be unique",
+    .catch((error) => {
+      next(error);
     });
-  } else {
-    const newId = Math.floor(Math.random() * 10000000);
-    newPerson.id = newId;
-    persons = persons.concat([newPerson]);
-    response.json(persons);
-  }
 });
+
+app.delete("/api/persons/:id", (request, response, next) => {
+  Person.findByIdAndRemove(request.params.id)
+    .then((result) => response.status(204).end())
+    .catch((error) => next(error));
+});
+
+app.put("/api/persons/:id", (request, response, next) => {
+  const body = request.body;
+  const personToUpdate = {
+    name: body.name,
+    number: body.number,
+  };
+
+  Person.findByIdAndUpdate(request.params.id, personToUpdate, {
+    new: true,
+    runValidators: true,
+    context: "query",
+  })
+    .then((updatedPerson) => {
+      response.json(updatedPerson);
+    })
+    .catch((error) => next(error));
+});
+
+app.post("/api/persons", (request, response, next) => {
+  const newPerson = request.body;
+  const personToSave = new Person({
+    name: newPerson.name,
+    number: newPerson.number,
+  });
+
+  personToSave
+    .save()
+    .then((savedPerson) => {
+      Person.find({}).then((persons) => {
+        response.json(persons);
+      });
+    })
+    .catch((error) => next(error));
+});
+
+// Unknown Endpoint
+const unknownEndpoint = (request, response) => {
+  response.status(404).send({ error: "unknown endpoint" });
+};
+app.use(unknownEndpoint);
+
+// error handling middleware
+const errorHandler = (error, request, response, next) => {
+  console.error(error.message);
+
+  if (error.name === "CastError") {
+    return response.status(400).send({ error: "malformatted id" });
+  } else if (error.name === "ValidationError") {
+    return response.status(400).json({ error: error.message });
+  }
+
+  next(error);
+};
+app.use(errorHandler);
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
